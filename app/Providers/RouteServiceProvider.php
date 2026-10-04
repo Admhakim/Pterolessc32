@@ -71,15 +71,8 @@ Route::middleware('daemon')
 */
 protected function configureRateLimiting(): void
 {
-// Authentication rate limiting. For login and checkpoint endpoints we'll apply
-// a limit of 10 requests per minute, for the forgot password endpoint apply a
-// limit of two per minute for the requester so that there is less ability to
-// trigger email spam.
+// Apply a limit of 10 requests per minute to authentication endpoints.
 RateLimiter::for('authentication', function (Request $request) {
-if ($request->route()->named('auth.post.forgot-password')) {
-return Limit::perMinute(2)->by($request->ip());
-}
-
 return Limit::perMinute(10)->by($request->ip());
 });
 

@@ -57,7 +57,7 @@
     "yup": "^0.29.1"
   },
   "devDependencies": {
-    "@babel/core": "^7.12.1",
+    "@babel/core": "^7.28.5",
     "@babel/plugin-proposal-class-properties": "^7.12.1",
     "@babel/plugin-proposal-nullish-coalescing-operator": "^7.12.1",
     "@babel/plugin-proposal-object-rest-spread": "^7.12.1",
@@ -71,6 +71,7 @@
     "@babel/preset-typescript": "^7.12.1",
     "@babel/runtime": "^7.12.1",
     "@fontsource-variable/ibm-plex-sans": "^5.2.8",
+    "@playwright/test": "^1.63.0",
     "@testing-library/dom": "^8.14.0",
     "@testing-library/jest-dom": "^5.16.4",
     "@testing-library/react": "12.1.5",
@@ -132,12 +133,25 @@
   "scripts": {
     "clean": "cd public/assets && find . \\( -name \"*.js\" -o -name \"*.map\" \\) -type f -delete",
     "test": "jest",
+    "test:e2e": "playwright test",
     "tsc": "tsc --noEmit",
+    "tsc:e2e": "tsc --noEmit --project tsconfig.e2e.json",
     "lint": "eslint ./resources/scripts/**/*.{ts,tsx} --ext .ts,.tsx",
     "watch": "cross-env NODE_ENV=development ./node_modules/.bin/webpack --watch --progress",
     "build": "cross-env NODE_ENV=development ./node_modules/.bin/webpack --progress",
     "build:production": "yarn run clean && cross-env NODE_ENV=production ./node_modules/.bin/webpack --mode production",
     "serve": "yarn run clean && cross-env NODE_ENV=development USE_LOCAL_CERTS=true WEBPACK_PUBLIC_PATH=https://pterodactyl.test:5173/ webpack serve --progress --hot --server-type https"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^@/(.*)$": "<rootDir>/resources/scripts/$1",
+      "^@definitions/(.*)$": "<rootDir>/resources/scripts/api/definitions/$1",
+      "^@feature/(.*)$": "<rootDir>/resources/scripts/components/server/features/$1"
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/e2e/"
+    ]
   },
   "browserslist": [
     "> 0.5%",

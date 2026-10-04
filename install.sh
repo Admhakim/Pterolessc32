@@ -27,6 +27,9 @@ printf "\n${BLUE}==>${RESET} ${WHITE}%s${RESET}\n" "$1"
 }
 trap 'printf "\n${RED}[FAIL]${RESET} Installation failed at line %s.\n" "$LINENO" >&2' ERR
 AUTOMATIC_SETUP=false
+EMAIL_ENABLED=false
+EMAIL_ADDRESS=""
+EMAIL_APP_PASSWORD=""
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="admin123"
 ADMIN_EMAIL="admin@example.com"
@@ -39,7 +42,7 @@ RECAPTCHA_WEBSITE_KEY=""
 PHPV=""
 for arg in "$@"; do
 case "$arg" in
---automaticsetup)
+--automaticsetup|--automatic)
 AUTOMATIC_SETUP=true
 ;;
 -h|--help)
@@ -48,6 +51,7 @@ Pteroless Installer
 Usage:
 sudo ./install.sh
 sudo ./install.sh --automaticsetup
+sudo ./install.sh --automatic
 Modes:
 Normal
 Opens the setup form and asks for:
@@ -60,6 +64,7 @@ Opens the setup form and asks for:
 - reCAPTCHA on/off
 - reCAPTCHA website key
 - reCAPTCHA secret key
+- Optional Gmail SMTP email and App Password
 Automatic
 Uses these defaults:
 Username : admin
@@ -68,6 +73,8 @@ Email: admin@example.com
 Name : Admin User
 App URL: http://127.0.0.1:8080
 reCAPTCHA: OFF
+Outgoing email: OFF unless both PTEROLESS_EMAIL_ADDRESS and
+PTEROLESS_EMAIL_APP_PASSWORD are provided in the environment.
 EOF2
 exit 0
 ;;
@@ -100,6 +107,21 @@ ADMIN_PASSWORD="admin123"
 RECAPTCHA_ENABLED=false
 RECAPTCHA_SECRET_KEY=""
 RECAPTCHA_WEBSITE_KEY=""
+EMAIL_ADDRESS="${PTEROLESS_EMAIL_ADDRESS:-}"
+EMAIL_APP_PASSWORD="${PTEROLESS_EMAIL_APP_PASSWORD:-}"
+if [[ -n "$EMAIL_ADDRESS" || -n "$EMAIL_APP_PASSWORD" ]]; then
+if [[ -z "$EMAIL_ADDRESS" || -z "$EMAIL_APP_PASSWORD" ]]; then
+fail "Set both PTEROLESS_EMAIL_ADDRESS and PTEROLESS_EMAIL_APP_PASSWORD to enable Gmail SMTP."
+fi
+EMAIL_APP_PASSWORD="${EMAIL_APP_PASSWORD//[[:space:]]/}"
+if [[ ! "$EMAIL_ADDRESS" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+fail "PTEROLESS_EMAIL_ADDRESS must be a valid email address."
+fi
+if [[ ! "$EMAIL_APP_PASSWORD" =~ ^[A-Za-z0-9]{16}$ ]]; then
+fail "The Gmail App Password must contain 16 letters or numbers."
+fi
+EMAIL_ENABLED=true
+fi
 printf "${WHITE}Automatic setup enabled.${RESET}\n"
 printf "\n"
 printf "Username : ${CYAN}%s${RESET}\n" "$ADMIN_USERNAME"
@@ -108,6 +130,7 @@ printf "Email: ${CYAN}%s${RESET}\n" "$ADMIN_EMAIL"
 printf "Name : ${CYAN}%s %s${RESET}\n" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME"
 printf "App URL: ${CYAN}%s${RESET}\n" "$APP_URL"
 printf "reCAPTCHA: ${CYAN}OFF${RESET}\n"
+printf "Outgoing email: ${CYAN}%s${RESET}\n" "$([[ "$EMAIL_ENABLED" == true ]] && printf 'Gmail SMTP' || printf 'OFF (log only)')"
 printf "\n"
 else
 printf "${WHITE}Pteroless Setup${RESET}\n"
@@ -163,6 +186,46 @@ warn "Please enter Y or N."
 esac
 done
 printf "\n"
+printf "${WHITE}Outgoing Email Setup${RESET}\n"
+while true; do
+read -r -p "Enable outgoing email through Gmail SMTP? [y/N]: " INPUT_EMAIL_ENABLED
+INPUT_EMAIL_ENABLED="${INPUT_EMAIL_ENABLED:-N}"
+case "$INPUT_EMAIL_ENABLED" in
+[Yy])
+while true; do
+read -r -p "Gmail address [$ADMIN_EMAIL]: " INPUT_EMAIL_ADDRESS
+EMAIL_ADDRESS="${INPUT_EMAIL_ADDRESS:-$ADMIN_EMAIL}"
+if [[ "$EMAIL_ADDRESS" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
+break
+fi
+warn "Enter a valid email address."
+done
+while true; do
+read -r -s -p "Gmail App Password (spaces are okay): " INPUT_EMAIL_APP_PASSWORD
+printf '%s\n' ""
+EMAIL_APP_PASSWORD="${INPUT_EMAIL_APP_PASSWORD//[[:space:]]/}"
+if [[ "$EMAIL_APP_PASSWORD" =~ ^[A-Za-z0-9]{16}$ ]]; then
+break
+fi
+warn "Enter the 16-character Google App Password, not your account password."
+done
+EMAIL_ENABLED=true
+ok "Gmail SMTP enabled."
+break
+;;
+[Nn])
+EMAIL_ENABLED=false
+EMAIL_ADDRESS=""
+EMAIL_APP_PASSWORD=""
+ok "Outgoing email disabled; messages will use log mode."
+break
+;;
+*)
+warn "Please enter Y or N."
+;;
+esac
+done
+printf "\n"
 printf "${WHITE}Setup summary${RESET}\n"
 printf '%s\n' '----------------------------------------'
 printf "Username : %s\n" "$ADMIN_USERNAME"
@@ -171,6 +234,7 @@ printf "Email: %s\n" "$ADMIN_EMAIL"
 printf "Name : %s %s\n" "$ADMIN_FIRST_NAME" "$ADMIN_LAST_NAME"
 printf "App URL: %s\n" "$APP_URL"
 printf "reCAPTCHA: %s\n" "$([[ "$RECAPTCHA_ENABLED" == true ]] && printf 'enabled' || printf 'disabled')"
+printf "Outgoing email: %s\n" "$([[ "$EMAIL_ENABLED" == true ]] && printf 'Gmail SMTP' || printf 'OFF (log only)')"
 printf '%s\n' '----------------------------------------'
 read -r -p "Continue installation? [Y/n]: " CONFIRM
 CONFIRM="${CONFIRM:-Y}"
@@ -409,11 +473,15 @@ set_env "CACHE_DRIVER" "file"
 set_env "CACHE_STORE" "file"
 set_env "SESSION_DRIVER" "file"
 set_env "QUEUE_CONNECTION" "sync"
-if grep -qE '^MAIL_HOST=' "$ROOT/.env"; then
-MAIL_HOST_VALUE="$(grep '^MAIL_HOST=' "$ROOT/.env" | head -n1 | cut -d'=' -f2- || true)"
-if [[ -z "$MAIL_HOST_VALUE" || "$MAIL_HOST_VALUE" == "smtp.example.com" ]]; then
-set_env "MAIL_MAILER" "log"
-fi
+if [[ "$EMAIL_ENABLED" == true ]]; then
+set_env "MAIL_MAILER" "smtp"
+set_env "MAIL_HOST" "smtp.gmail.com"
+set_env "MAIL_PORT" "587"
+set_env "MAIL_ENCRYPTION" "tls"
+set_env "MAIL_USERNAME" "$EMAIL_ADDRESS"
+set_env "MAIL_PASSWORD" "$EMAIL_APP_PASSWORD"
+set_env "MAIL_FROM_ADDRESS" "$EMAIL_ADDRESS"
+set_env "MAIL_FROM_NAME" "Pteroless"
 else
 set_env "MAIL_MAILER" "log"
 fi

@@ -101,7 +101,6 @@
 <i class="fa fa-users"></i> <span>Users</span>
 </a>
 </li>
-<li class="header">SERVICE MANAGEMENT</li>
 </ul>
 </section>
 </aside>
@@ -139,7 +138,7 @@ There was an error validating the data provided.<br><br>
 <strong><i class="fa fa-fw {{ $appIsGit ? 'fa-git-square' : 'fa-code-fork' }}"></i></strong> {{ $appVersion }}<br />
 <strong><i class="fa fa-fw fa-clock-o"></i></strong> {{ round(microtime(true) - LARAVEL_START, 3) }}s
 </div>
-Copyright &copy; 2015 - {{ date('Y') }} Pteroless.
+Copyright &copy; 2024 - {{ date('Y') }} Pteroless. &middot; Developed by <strong>kagenouReal</strong>.
 </footer>
 </div>
 @section('footer-scripts')

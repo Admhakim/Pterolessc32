@@ -74,8 +74,18 @@ export default () => {
         z-index: 10;
     }`;
 
-    const handleConsoleOutput = (line: string, prelude = false) =>
-        terminal.writeln((prelude ? TERMINAL_PRELUDE : '') + line.replace(/(?:\r\n|\r|\n)$/im, '') + '\u001b[0m');
+    const handleConsoleOutput = (line: string, prelude = false) => {
+        const chunks = line.replace(/\r\n|\r/g, '\n').split('\n');
+
+        chunks.forEach((chunk, index) => {
+            const text = chunk.replace(/(?:\r\n|\r|\n)$/im, '').trimEnd();
+            if (!text) return;
+
+            terminal.writeln(
+                (prelude && index === 0 ? TERMINAL_PRELUDE : '') + text + '\u001b[0m'
+            );
+        });
+    };
 
     const handleTransferStatus = (status: string) => {
         switch (status) {

@@ -10,6 +10,11 @@ class LocalProcessManager
 private const SIGNAL_CONT = 18;
 private const SIGNAL_KILL = 9;
 private const SIGNAL_TERM = 15;
+private const STATS_TTL_SECONDS = 1.0;
+private const LOGS_TTL_SECONDS = 0.5;
+
+private array $statsCache = [];
+private array $logsCache = [];
 
 public function __construct(private LocalServerService $local, private ResourceAgentClient $agent)
 {
@@ -18,6 +23,10 @@ public function __construct(private LocalServerService $local, private ResourceA
 private function pidFile(Server $server): string { return $this->local->metaPath($server) . '/pid'; }
 private function logFile(Server $server): string { return $this->local->metaPath($server) . '/logs/output.log'; }
 private function fifo(Server $server): string { return $this->local->metaPath($server) . '/stdin.fifo'; }
+private function invalidateCache(Server $server): void
+{
+unset($this->statsCache[$server->uuid], $this->logsCache[$server->uuid]);
+}
 
 public function pid(Server $server): int
 {
@@ -172,6 +181,7 @@ return $this->pid($server) > 0 || $this->processGroups($server) !== [];
 
 public function start(Server $server): int
 {
+$this->invalidateCache($server);
 $this->local->ensureDirectory($server);
 $lock = @fopen($this->local->metaPath($server) . '/start.lock', 'c');
 if ($lock === false) throw new RuntimeException('Unable to acquire the process start lock.');
@@ -302,6 +312,7 @@ return $pid;
 
 public function stop(Server $server, bool $force = false): void
 {
+$this->invalidateCache($server);
 $agentEnabled = $this->agent->isAvailable();
 $pid = $this->pid($server);
 $groups = $this->processGroups($server);
@@ -340,6 +351,7 @@ return $this->start($server);
 
 public function command(Server $server, string $command): void
 {
+$this->invalidateCache($server);
 if (!$this->isRunning($server)) throw new RuntimeException('Server must be running.');
 $fifo = $this->fifo($server);
 if (!file_exists($fifo) || @filetype($fifo) !== 'fifo') throw new RuntimeException('Command pipe is unavailable.');
@@ -353,19 +365,55 @@ public function logs(Server $server, int $bytes = 50000): string
 {
 $this->local->ensureDirectory($server);
 $file = $this->logFile($server);
-if (!is_file($file)) return '';
-$size = filesize($file);
-if ($size === false || $size <= $bytes) return (string) file_get_contents($file);
-$handle = fopen($file, 'rb');
-if (!$handle) return '';
-fseek($handle, -$bytes, SEEK_END);
-$data = stream_get_contents($handle);
-fclose($handle);
-return $data === false ? '' : $data;
+$key = $server->uuid;
+
+if (!is_file($file)) {
+$this->logsCache[$key] = ['expires_at' => microtime(true) + self::LOGS_TTL_SECONDS, 'size' => 0, 'mtime' => 0, 'value' => ''];
+return '';
+}
+
+$state = @stat($file);
+$size = $state['size'] ?? filesize($file);
+$mtime = $state['mtime'] ?? filemtime($file);
+$cached = $this->logsCache[$key] ?? null;
+if (is_array($cached)
+    && ($cached['expires_at'] ?? 0) > microtime(true)
+    && ($cached['size'] ?? null) === $size
+    && ($cached['mtime'] ?? null) === $mtime
+) {
+    return $cached['value'];
+}
+
+if ($size === false || $size <= $bytes) {
+    $value = (string) file_get_contents($file);
+} else {
+    $handle = fopen($file, 'rb');
+    if (!$handle) return '';
+    fseek($handle, -$bytes, SEEK_END);
+    $value = stream_get_contents($handle);
+    fclose($handle);
+    $value = $value === false ? '' : $value;
+}
+
+$this->logsCache[$key] = [
+    'expires_at' => microtime(true) + self::LOGS_TTL_SECONDS,
+    'size' => $size,
+    'mtime' => $mtime,
+    'value' => $value,
+];
+
+return $value;
 }
 
 public function stats(Server $server): array
 {
+$key = $server->uuid;
+$now = microtime(true);
+$cached = $this->statsCache[$key] ?? null;
+if (is_array($cached) && ($cached['expires_at'] ?? 0) > $now) {
+    return $cached['value'];
+}
+
 $pid = $this->pid($server);
 $groups = $this->processGroups($server);
 $processIds = $pid > 0 ? [$pid] : [];
@@ -435,20 +483,27 @@ $networkTx = $resources['network_tx_bytes'];
 }
 }
 
-return [
-'state' => $running ? 'running' : 'offline',
-'is_suspended' => false,
-'utilization' => [
-'memory_bytes' => $memory,
-'cpu_absolute' => $cpu,
-'disk_bytes' => $disk,
-'disk_limit_exceeded' => $diskLimitExceeded,
-'disk_limit_mode' => $diskLimitMode,
-'network_available' => $networkAvailable,
-'network' => ['rx_bytes' => $networkRx, 'tx_bytes' => $networkTx],
-'uptime' => $uptime,
-],
-];
+$stats = [
+            'state' => $running ? 'running' : 'offline',
+            'is_suspended' => false,
+            'utilization' => [
+                'memory_bytes' => $memory,
+                'cpu_absolute' => $cpu,
+                'disk_bytes' => $disk,
+                'disk_limit_exceeded' => $diskLimitExceeded,
+                'disk_limit_mode' => $diskLimitMode,
+                'network_available' => $networkAvailable,
+                'network' => ['rx_bytes' => $networkRx, 'tx_bytes' => $networkTx],
+                'uptime' => $uptime,
+            ],
+        ];
+
+        $this->statsCache[$key] = [
+            'expires_at' => microtime(true) + self::STATS_TTL_SECONDS,
+            'value' => $stats,
+        ];
+
+        return $stats;
 }
 
 private function diskUsage(Server $server): int

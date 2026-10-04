@@ -27,7 +27,8 @@ const PageContentBlock: React.FC<PageContentBlockProps> = ({ title, showFlashKey
                 <ContentContainer css={tw`mb-4`}>
                     <p css={tw`text-center text-neutral-500 text-xs`}>
                         Pteroless
-                        &nbsp;&copy; 2015 - {new Date().getFullYear()}
+                        &nbsp;&copy; 2024 - {new Date().getFullYear()}
+                        &nbsp;&middot; Developed by <strong>kagenouReal</strong>
                     </p>
                 </ContentContainer>
             </>

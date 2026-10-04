@@ -11,6 +11,7 @@ class LocalSocket {
     private lastLog = '';
     private lastStatus: string | null = null;
     private closed = false;
+    private pollRequest: Promise<void> | null = null;
 
     addListener(event: string, callback: (value: any) => void) {
         if (!this.listeners.has(event)) this.listeners.set(event, new Set());
@@ -45,12 +46,9 @@ class LocalSocket {
     async send(event: string, value?: any) {
         const uuid = this.uuid;
         if (event === SocketRequest.SEND_LOGS) {
-            const { data } = await http.get(`/api/client/servers/${uuid}/logs`);
-            this.lastLog = data.logs || '';
-            this.emit(SocketEvent.CONSOLE_OUTPUT, this.lastLog);
+            await this.poll(uuid);
         } else if (event === SocketRequest.SEND_STATS) {
-            const { data } = await http.get(`/api/client/servers/${uuid}/resources`);
-            this.emitStats(data.attributes);
+            await this.poll(uuid);
         } else if (event === 'send command') {
             await http.post(`/api/client/servers/${uuid}/command`, { command: value });
         } else if (event === SocketRequest.SET_STATE) {
@@ -61,32 +59,43 @@ class LocalSocket {
 
     async poll(uuid: string): Promise<number> {
         if (this.closed) return 0;
-        try {
-            const [{ data: resources }, { data: logs }] = await Promise.all([
-                http.get(`/api/client/servers/${uuid}/resources`),
-                http.get(`/api/client/servers/${uuid}/logs`),
-            ]);
-            if (this.closed) return 0;
+        if (this.pollRequest) {
+            await this.pollRequest;
+            return this.closed ? 0 : 1500;
+        }
 
-            const status = resources.attributes.current_state as ServerStatus;
+        this.pollRequest = (async () => {
+            const { data } = await http.get(`/api/client/servers/${uuid}/snapshot`);
+            if (this.closed) return;
+
+            const payload = data ?? {};
+            const resources = payload.resources?.attributes ?? {};
+            const status = (resources.current_state ?? 'offline') as ServerStatus;
             if (status !== this.lastStatus) {
                 this.lastStatus = status;
                 this.setServerStatus(status);
                 this.emit(SocketEvent.STATUS, status);
             }
-            this.emitStats(resources.attributes);
-            const next = logs.logs || '';
+            this.emitStats(resources);
+
+            const next = typeof payload.logs?.logs === 'string' ? payload.logs.logs : '';
             if (next.length > this.lastLog.length && next.startsWith(this.lastLog)) {
                 this.emit(SocketEvent.CONSOLE_OUTPUT, next.slice(this.lastLog.length));
             } else if (next !== this.lastLog) {
                 this.emit(SocketEvent.CONSOLE_OUTPUT, next);
             }
             this.lastLog = next;
-            return 1500;
+        })();
+
+        try {
+            await this.pollRequest;
         } catch (error) {
             console.error(error);
-            return 1500;
+        } finally {
+            this.pollRequest = null;
         }
+
+        return this.closed ? 0 : 1500;
     }
 
     removeAllListeners() { this.listeners.clear(); }
@@ -106,14 +115,35 @@ export default () => {
 
         let active = true;
         let timer: number | undefined;
+        let requestRunning = false;
         const poll = async () => {
+            if (!active || document.visibilityState !== 'visible' || requestRunning) return;
+
+            requestRunning = true;
             const interval = await socket.poll(uuid);
-            if (active && interval > 0) timer = window.setTimeout(poll, interval);
+            requestRunning = false;
+            if (active && interval > 0 && document.visibilityState === 'visible') {
+                timer = window.setTimeout(poll, interval);
+            }
         };
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                if (timer !== undefined) window.clearTimeout(timer);
+                timer = undefined;
+                return;
+            }
+
+            if (timer !== undefined) window.clearTimeout(timer);
+            timer = undefined;
+            void poll();
+        };
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
         void poll();
         return () => {
             active = false;
             if (timer !== undefined) window.clearTimeout(timer);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
             socket.close();
             setConnectionState(false);
             setInstance(null);

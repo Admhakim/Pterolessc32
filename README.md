@@ -41,6 +41,11 @@ The runtime commands use software installed on the host. A preset may install
 dependencies at every start. This is not container image management and does
 not create an isolated runtime environment.
 
+The local runner does not require Wings, Docker, or systemd to start server
+applications. It launches host processes directly. The optional privileged
+resource agent is separate from the runner and is started at boot with cron
+when available.
+
 ### Runtime Presets
 
 The current startup templates are defined in
@@ -86,6 +91,13 @@ Stopping a process first sends a termination signal and may force-kill any
 remaining processes. This lifecycle manager is local to one Linux host; it
 does not provide Wings' container lifecycle or isolation.
 
+The client console uses an HTTP polling compatibility layer, not a Wings
+WebSocket. The `/api/client/servers/{server}/snapshot` endpoint returns
+resource statistics and console logs together. The browser polls about every
+1.5 seconds while the server page is visible, avoids overlapping requests, and
+pauses polling when the tab is hidden. This reduces duplicate requests but can
+still show some delay compared with a real-time socket.
+
 ### File Manager
 
 Local file endpoints support listing, reading and writing text, uploading and
@@ -116,7 +128,7 @@ Pteroless is not equivalent to a normal Pterodactyl deployment:
 | Networking | Ports and firewall exposure are host-managed. The built-in local allocation defaults to loopback and does not provide container network isolation. |
 | Database | The panel uses SQLite by default. Per-server databases require an independently configured MySQL-compatible database host. |
 | Production operation | `start.sh` runs Laravel's built-in `artisan serve`. It is a convenience launcher, not a production web-server or process-supervision setup. |
-| Testing | This checkout has a few frontend utility tests, but no backend test suite or CI workflow. Coverage is not sufficient to claim production readiness. |
+| Testing | This checkout has Playwright smoke and opt-in local-runner E2E tests, but no comprehensive backend suite or CI workflow. Coverage is not sufficient to claim production readiness. |
 
 Because server applications share the panel's Unix identity, only run code you
 trust. Do not treat panel permissions, Egg/Nest records, or resource limits as
@@ -125,10 +137,12 @@ a security boundary.
 ## Requirements
 
 The provided installer targets Debian/Ubuntu systems with APT and root access.
-It installs system packages and configures the local resource agent. The
-project requires PHP 8.2-8.4 and Composer; the installer also provisions the
-frontend toolchain and the host runtimes used by the presets, including
-Node.js, Python 3 with `venv`, Java, and Go.
+It installs system packages and configures the optional local resource agent.
+The project requires PHP 8.2-8.4 and Composer; the frontend requires Node.js
+22 or newer and Yarn. The installer also provisions host runtimes used by the
+presets, including Node.js, Python 3 with `venv`, Java, and Go. Other Linux
+distributions may work with manual dependency setup, but are not covered by the
+installer.
 
 The resource agent needs Linux cgroup v2 with CPU and memory controllers
 delegated to its cgroup tree. The installer cannot enable host-level
@@ -161,13 +175,33 @@ resource agent. Review the script before running it on a machine with
 important workloads.
 
 Run `sudo bash ./install.sh --help` to review supported modes and prompts. The
-installer targets Debian/Ubuntu with APT, runs database migrations, and builds
-frontend assets. Re-running it can update host packages and replace the
+interactive installer can optionally configure Gmail SMTP by asking for a
+Gmail address and Google App Password; the Gmail host, port, TLS, and sender
+fields are filled automatically. Email is off by default. Choosing off leaves
+the mailer in `log` mode, which does not deliver email.
+
+Automatic setup accepts either `--automaticsetup` or `--automatic` and never
+prompts for mail settings. It keeps email off unless both
+`PTEROLESS_EMAIL_ADDRESS` and `PTEROLESS_EMAIL_APP_PASSWORD` are present in its
+environment. To avoid putting the App Password in shell history, read it
+without echo and pass the environment variables through `sudo`:
+
+```bash
+read -r -s -p 'Google App Password: ' PTEROLESS_EMAIL_APP_PASSWORD
+printf '\n'
+export PTEROLESS_EMAIL_APP_PASSWORD
+export PTEROLESS_EMAIL_ADDRESS='you@gmail.com'
+sudo --preserve-env=PTEROLESS_EMAIL_ADDRESS,PTEROLESS_EMAIL_APP_PASSWORD ./install.sh --automatic
+unset PTEROLESS_EMAIL_APP_PASSWORD
+```
+
+The installer targets Debian/Ubuntu with APT, runs database migrations, and
+builds frontend assets. Re-running it can update host packages and replace the
 installed agent, so back up important data and review its output first.
 
-**Do not use `--automaticsetup` on an exposed installation without changing
-its defaults.** That mode currently uses the predictable administrator
-credentials `admin` / `admin123`.
+**Do not use `--automaticsetup` or `--automatic` on an exposed installation
+without changing its defaults.** Both modes currently use the predictable
+administrator credentials `admin` / `admin123`.
 
 Start the panel as the regular installer user, without `sudo`:
 
@@ -227,13 +261,37 @@ applications before copying their files for a consistent snapshot. Never add
 `.env`, the SQLite database, logs, or user server files to a public source
 commit.
 
+## Email And CAPTCHA
+
+Outgoing email is optional. The default `log` mailer records messages in the
+Laravel log and does not send them. The installer wizard can configure Gmail
+SMTP using a Gmail address and App Password; it stores the SMTP settings in
+`.env`. For another SMTP provider, configure its mailer, host, port, encryption,
+credentials, and sender through `.env` or Admin → Settings → Mail after the
+mailer is set to SMTP. Never commit SMTP credentials or paste them into issue
+reports.
+
+Email is used for account invitation and initial password setup, subuser
+membership notifications, server-install completion, and the admin test-mail
+button. The forgot-password email flow is removed. Pteroless does not send
+Pterodactyl version-update announcements by email.
+
+Login CAPTCHA is optional and disabled by default in the installer. When
+enabled, configure Google reCAPTCHA v2 Invisible site and secret keys. The key
+must allow the exact hostname used in `APP_URL`; domain verification is enabled,
+so a different forwarded or proxy hostname can cause login verification to
+fail. The website key is public configuration, but the secret must stay private.
+
 ## Admin And Client Surfaces
 
-The repository includes Pterodactyl-derived admin pages for users, servers,
-locations, nodes, allocations, nests/eggs, database hosts, mounts, settings,
-and API keys. The client interface includes account settings and server pages
-for console, files, startup, allocations, subusers, databases, activity,
-schedules, and backups.
+The current admin sidebar exposes Overview, Settings, Application API,
+Database Hosts, Servers, and Users. Application API keys have per-resource
+permissions; account API keys are separate credentials for the Client API.
+Additional inherited admin routes and pages for locations, nodes, allocations,
+nests/eggs, and mounts remain in the codebase, but a visible page or route does
+not guarantee local-runner support. The client interface includes account
+settings and server pages for console, files, startup, allocations, subusers,
+databases, activity, schedules, and backups.
 
 Some pages are inherited and still call Wings repositories. A rendered page
 or registered API route does not prove local-runner support. Backup and
@@ -244,7 +302,9 @@ scheduled task workflows are known gaps; see [Important Gaps](#important-gaps).
 The panel database defaults to SQLite at `database/database.sqlite`. This is
 separate from databases created for applications. Per-server database
 creation uses configured database hosts and MySQL-compatible management
-operations; it does not provide an embedded database server.
+operations; it does not provide an embedded database server. This feature is
+optional and needs a reachable MySQL-compatible host plus PHP's `pdo_mysql`
+extension. It does not require Docker, Wings, or systemd.
 
 Configure a reachable database host and credentials in the admin panel before
 enabling that feature. Treat database-host credentials as secrets and never
@@ -345,8 +405,30 @@ yarn test
 yarn tsc
 ```
 
-There is currently no comprehensive backend test suite. Passing these checks
-does not establish that the application is safe or reliable for production.
+Playwright uses `http://localhost:8080` by default; override it with
+`E2E_BASE_URL`. Set credentials for a local admin test account before running
+the browser tests. The smoke test visits admin/client pages and checks for
+browser and server errors. CAPTCHA should be disabled in the test environment
+unless the browser can complete its challenge:
+
+```bash
+E2E_USERNAME=<local-admin-username> \
+E2E_PASSWORD=<local-admin-password> \
+yarn test:e2e tests/e2e/smoke.spec.ts
+```
+
+The opt-in local-runner test creates two temporary Node.js applications,
+checks their HTTP responses, and removes their server records, files, processes,
+and allocations when it completes. Run it only against a trusted local test
+installation; it creates and deletes test servers and allocations:
+
+```bash
+E2E_LOCAL_RUNNER=1 yarn test:e2e tests/e2e/local-runner.spec.ts
+```
+
+The E2E TypeScript check is `yarn tsc:e2e`. There is no comprehensive backend
+test suite or CI workflow. Passing these checks does not establish that the
+application is safe or reliable for production.
 
 ## Project Direction
 

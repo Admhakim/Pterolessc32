@@ -44,7 +44,7 @@ export default forwardRef<HTMLFormElement, Props>(({ title, ...props }, ref) => 
             </div>
         </Form>
         <p css={tw`text-center text-neutral-500 text-xs mt-4`}>
-            Pteroless &copy; 2015 - {new Date().getFullYear()}
+            Pteroless &copy; 2024 - {new Date().getFullYear()} &middot; Developed by <strong>kagenouReal</strong>
         </p>
     </Container>
 ));

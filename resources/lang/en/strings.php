@@ -91,5 +91,5 @@ return [
 'enable' => 'Enable',
 'disable' => 'Disable',
 'save' => 'Save',
-'copyright' => '&copy; 2015 - :year Pteroless',
+'copyright' => '&copy; 2024 - :year Pteroless',
 ];

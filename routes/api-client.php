@@ -68,6 +68,7 @@ Route::middleware([ResourceLimit::Websocket->middleware()])
 ->name('api:client:server.ws');
 Route::get('/resources', Client\Servers\LocalResourceController::class)->name('api:client:server.resources');
 Route::get('/logs', Client\Servers\LocalLogsController::class)->name('api:client:server.logs');
+Route::get('/snapshot', Client\Servers\LocalSnapshotController::class)->name('api:client:server.snapshot');
 Route::get('/activity', Client\Servers\ActivityLogController::class)->name('api:client:server.activity');
 
 Route::post('/command', [Client\Servers\LocalCommandController::class, 'index']);

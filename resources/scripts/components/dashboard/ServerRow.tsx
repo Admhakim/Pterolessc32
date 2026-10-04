@@ -47,10 +47,8 @@ const StatusIndicatorBox = styled(GreyRowBox)<{ $status: ServerPowerState | unde
     }
 `;
 
-type Timer = ReturnType<typeof setInterval>;
-
 export default ({ server, className }: { server: Server; className?: string }) => {
-    const interval = useRef<Timer>(null) as React.MutableRefObject<Timer>;
+    const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [isSuspended, setIsSuspended] = useState(server.status === 'suspended');
     const [stats, setStats] = useState<ServerStats | null>(null);
 
@@ -68,12 +66,50 @@ export default ({ server, className }: { server: Server; className?: string }) =
         // the server is suspended.
         if (isSuspended || server.isNodeUnderMaintenance) return;
 
-        getStats().then(() => {
-            interval.current = setInterval(() => getStats(), 30000);
-        });
+        let active = true;
+        let requestRunning = false;
+        let refreshWhenIdle = false;
+
+        const refresh = async () => {
+            if (!active || document.visibilityState !== 'visible') return;
+            if (requestRunning) {
+                refreshWhenIdle = true;
+                return;
+            }
+
+            requestRunning = true;
+            await getStats();
+            requestRunning = false;
+            if (!active) return;
+
+            if (refreshWhenIdle && document.visibilityState === 'visible') {
+                refreshWhenIdle = false;
+                void refresh();
+            } else if (document.visibilityState === 'visible') {
+                timeout.current = setTimeout(() => void refresh(), 30000);
+            }
+        };
+
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                if (timeout.current) clearTimeout(timeout.current);
+                timeout.current = null;
+                return;
+            }
+
+            if (timeout.current) clearTimeout(timeout.current);
+            timeout.current = null;
+            void refresh();
+        };
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        void refresh();
 
         return () => {
-            interval.current && clearInterval(interval.current);
+            active = false;
+            if (timeout.current) clearTimeout(timeout.current);
+            timeout.current = null;
+            document.removeEventListener('visibilitychange', onVisibilityChange);
         };
     }, [isSuspended, server.isNodeUnderMaintenance]);
 

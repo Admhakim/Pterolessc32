@@ -21,7 +21,6 @@ use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Contracts\Auth\Authenticatable as AuthenticatableContract;
 use Illuminate\Contracts\Auth\Access\Authorizable as AuthorizableContract;
 use Illuminate\Contracts\Auth\CanResetPassword as CanResetPasswordContract;
-use Pterodactyl\Notifications\SendPasswordReset as ResetPasswordNotification;
 
 /**
 * Pterodactyl\Models\User.
@@ -201,21 +200,6 @@ public function toVueObject(): array
 return Collection::make($this->toArray())->except(['id', 'external_id'])
 ->merge(['identifier' => $this->identifier])
 ->toArray();
-}
-
-/**
-* Send the password reset notification.
-*
-* @param string $token
-*/
-public function sendPasswordResetNotification($token)
-{
-Activity::event('auth:reset-password')
-->withRequestMetadata()
-->subject($this)
-->log('sending password reset email');
-
-$this->notify(new ResetPasswordNotification($token));
 }
 
 /**
